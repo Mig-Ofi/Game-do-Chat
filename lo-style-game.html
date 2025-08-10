@@ -1,233 +1,281 @@
-<!--
-Project: MHFP .io — Multiplayer Mobile-ready
-Files included in this document:
-  1) index.html      -> Client (mobile + desktop friendly)
-  2) server.js       -> Node.js WebSocket server (authoritative simple server)
-
-How it works:
- - Max players per match: 16 (players + bots = 16). Map is smaller (1600x1600).
- - When a player connects, server spawns bots so total entities = 16.
- - When a new human player joins, server despawns bots to keep total 16 (i.e., bots = 16 - players).
- - Server runs a 20 Hz tick, simulates simple bot movement and bullets, and broadcasts state to clients.
- - Clients render and send inputs (movement vector, shooting) to server via WebSocket.
- - Mobile friendly controls: on-screen virtual joystick and fire button; responsive layout.
-
-How to use:
- 1) Save the first block as `index.html` and the second as `server.js`.
- 2) On your development machine or small VPS:
-    - Install Node.js (v16+)
-    - npm init -y
-    - npm install ws
-    - node server.js
- 3) Update the `WS_SERVER` constant in `index.html` to point to your server (ws://IP:PORT).
- 4) Serve index.html (GitHub Pages is fine) and open from a device. For local testing, host index.html with a simple static server.
-
-Notes / Limitations:
- - This is a lightweight demo server for testing and small lobbies. It's not production-ready (no auth, no anti-cheat, limited scaling).
- - If you want me to: add sprites, sounds, or extend server for matchmaking/rooms/persistence, I can.
---><!-- ===================== index.html (client) ===================== --><!doctype html>
+<!doctype html>
 
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
-  <title>MHFP .io — Multiplayer Demo</title>
-  <style>
-    :root{--bg:#071024;--panel:#0f1724;--accent:#6ee7b7;--muted:#9aa6bf}
-    *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-    html,body{height:100%;margin:0;background:linear-gradient(180deg,#071025 0%, #0b1020 60%);color:#e6eef8;touch-action:none}
-    #app{display:flex;height:100vh}
-    #left{width:280px;padding:12px}
-    #center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center}
-    #right{width:260px;padding:12px}
-    .panel{background:rgba(255,255,255,0.03);backdrop-filter:blur(6px);padding:12px;border-radius:12px;box-shadow:0 6px 18px rgba(2,6,23,.6)}
-    button{appearance:none;border:0;background:linear-gradient(90deg,#1f2937,#111827);color:#e6eef8;padding:8px 12px;border-radius:8px;cursor:pointer}
-    button.primary{background:linear-gradient(90deg,var(--accent),#3ddc97);color:#061018;font-weight:700}
-    #gameCanvas{width:100%;height:calc(100vh - 40px);background:transparent;border-radius:12px}
-    label{font-size:13px;color:var(--muted)}
-    .row{display:flex;gap:8px;align-items:center}
-    footer{position:fixed;left:0;right:0;bottom:8px;text-align:center;color:rgba(230,238,248,0.25);font-size:12px}
-    ul.leader{list-style:none;padding:0;margin:0}/* Mobile controls */
-.controls{position:fixed;left:12px;bottom:12px;display:flex;gap:12px;z-index:40}
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+<title>MHFP .io — Offline Bots</title>
+<style>
+:root{--bg:#071026;--panel:#0f1724;--accent:#6ee7b7;--accent2:#7cc3ff;--muted:#9aa6bf}
+*{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+html,body{height:100%;margin:0;background:linear-gradient(180deg,#041021 0%, #071026 70%);color:#e6eef8;-webkit-user-select:none}
+#app{display:flex;height:100vh;gap:12px;padding:12px}
+.panel{background:rgba(255,255,255,0.03);backdrop-filter:blur(6px);padding:12px;border-radius:12px;box-shadow:0 8px 30px rgba(2,6,23,.6)}
+.left{width:300px}
+.right{width:260px}
+.center{flex:1;display:flex;flex-direction:column;align-items:center}
+canvas{width:100%;height:calc(100vh - 80px);border-radius:12px;background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent)}
+h1{margin:4px 0;font-size:18px;color:var(--accent)}
+button{appearance:none;border:0;background:linear-gradient(90deg,#111827,#0b1220);color:#e6eef8;padding:8px 12px;border-radius:8px;cursor:pointer}
+button.primary{background:linear-gradient(90deg,var(--accent),#3ddc97);color:#061018;font-weight:700}
+.row{display:flex;gap:8px;align-items:center}
+.small{font-size:13px;color:var(--muted)}
+.leader{list-style:none;padding:0;margin:6px 0}
+.leader li{padding:6px 6px;border-bottom:1px dashed rgba(255,255,255,0.03)}
+footer{position:fixed;left:12px;right:12px;bottom:12px;text-align:center;color:rgba(230,238,248,0.25);font-size:12px}
+/* mobile controls */
+.controls{position:fixed;left:12px;bottom:12px;display:flex;gap:12px;z-index:50}
 .joystick{width:120px;height:120px;border-radius:999px;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;touch-action:none}
 .fireBtn{width:84px;height:84px;border-radius:999px;background:linear-gradient(180deg,#ff6b6b,#e63946);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px}
 @media(min-width:900px){.controls{display:none}}
-
-  </style>
+/* overlay menu */
+#menuOverlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.menuCard{pointer-events:auto;background:linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.02));padding:18px;border-radius:14px;text-align:center;min-width:280px}
+.switch{display:inline-flex;align-items:center;gap:8px}
+.range{width:100%}
+.badge{background:#0b1220;padding:6px 8px;border-radius:999px}
+</style>
 </head>
 <body>
-  <div id="app">
-    <div id="left" class="panel">
-      <h3>MHFP .io — Multiplayer</h3>
-      <div class="small">Conectado ao servidor: <span id="connStatus">Desconectado</span></div>
-      <div style="margin-top:10px" class="small">Max lobby (players + bots): <strong>16</strong></div>
-      <div style="margin-top:12px" class="row"><button id="playBtn" class="primary">Entrar / Play</button><button id="leaveBtn">Sair</button></div>
-      <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,0.03)">
-      <div><strong>Leaderboard</strong><ul id="leader" class="leader"></ul></div>
-    </div><div id="center">
-  <canvas id="gameCanvas" width="1280" height="720"></canvas>
-  <div id="mobileOverlay" style="display:none" class="panel small" aria-hidden="true">Toque na tela para atirar, use joystick para se mover.</div>
-  <div id="overlayMsg" style="position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:50;color:#fff"></div>
-
-  <!-- Mobile controls -->
-  <div class="controls" id="mobileControls">
-    <div class="joystick" id="joy"></div>
-    <div class="fireBtn" id="fireBtn">FIRE</div>
-  </div>
-</div>
-
-<div id="right" class="panel">
-  <div><label>Configuração</label>
-    <div style="margin-top:8px;color:var(--muted)">
-      <div>Resolução (canvas): <input id="resRange" type="range" min="0.5" max="1" step="0.1" value="1"/></div>
-      <div style="margin-top:6px">Velocidade bots: <input id="aiRange" type="range" min="0.6" max="1.6" step="0.1" value="1"/></div>
+<div id="app">
+  <div class="left panel">
+    <h1>MHFP .io — Offline (Bots)</h1>
+    <div class="small">Mapa compacto, ação rápida. Até <strong>16</strong> entidades (você + 15 bots). Mobile + Desktop.</div>
+    <div style="margin-top:12px" class="row"><button id="playBtn" class="primary">▶ Jogar</button><button id="stopBtn">⏹ Parar</button></div>
+    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.03);margin:12px 0">
+    <div><strong>Configurações</strong>
+      <div style="margin-top:8px" class="small">
+        <div style="margin:8px 0">Gráficos: <select id="gfx"><option value="high">Alto</option><option value="med">Médio</option><option value="low">Baixo</option></select></div>
+        <div>Partículas: <input id="particles" type="checkbox" checked/></div>
+        <div style="margin-top:8px">Resolução: <input id="resRange" type="range" min="0.5" max="1" step="0.1" value="1" class="range"/></div>
+        <div style="margin-top:8px">Bots (máx): <input id="botRange" type="range" min="1" max="15" step="1" value="15"/></div>
+      </div>
+    </div>
+    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.03);margin:12px 0">
+    <div><strong>Controles</strong>
+      <ul style="margin:8px 0;padding-left:18px;color:var(--muted)">
+        <li>W A S D / setas — mover</li>
+        <li>Mouse — mirar</li>
+        <li>Click / tocar — atirar</li>
+        <li>Espaço — dash (curto)</li>
+      </ul>
+    </div>
+  </div>  <div class="center">
+    <canvas id="game" width="1280" height="720"></canvas>
+    <div id="menuOverlay"><div class="menuCard panel" id="menuCard">
+      <h2 style="margin:0 0 8px 0">MHFP .io — Offline</h2>
+      <div class="small">Pronto para jogar com bots inteligentes. Toque <strong>Jogar</strong> ou use o botão acima.</div>
+      <div style="margin-top:12px" class="row"><button id="menuPlay" class="primary">Iniciar</button><button id="menuOptions">Opções</button></div>
+    </div></div>
+  </div>  <div class="right panel">
+    <div style="display:flex;justify-content:space-between;align-items:center"><strong>Leaderboard</strong><span id="scoreDisplay" class="badge">0</span></div>
+    <ul id="leader" class="leader"></ul>
+    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.03);margin:12px 0">
+    <div><strong>Power-ups</strong>
+      <div class="small" style="margin-top:8px">Spawnam aleatoriamente: Velocidade, Tiro Rápido, Escudo (tempo curto).</div>
     </div>
   </div>
-</div>
+</div><div class="controls" id="mobileControls">
+  <div class="joystick" id="joy"></div>
+  <div class="fireBtn" id="fire">FIRE</div>
+</div><footer>Salvar este arquivo como <code>index.html</code> e suba no GitHub Pages para testar.</footer><script>
+// MHFP .io — Offline bots (single file)
+// Author: Generated
 
-  </div>  <footer>Demo multiplayer — server simples incluso (server.js). Para testes locais, rode o servidor e atualize WS_SERVER em index.html.</footer>  <script>
-  // ================= CONFIG ==================
-  // Alterar para o endereço do seu servidor WebSocket (ex: ws://IP:8080)
-  const WS_SERVER = 'ws://localhost:8080';
-  const MAX_TOTAL = 16; // players + bots
-  const MAP_SIZE = 800; // half-extent, world runs -MAP_SIZE..MAP_SIZE (map smaller)
-  const TICK_RATE = 20; // client update rate (Hz)
+// Config
+const MAP_SIZE = 600; // half-extent (world -MAP..MAP)
+const MAX_TOTAL = 16; // you + bots
+const TICK = 1000/60; // 60 FPS logic
 
-  // ====== Canvas setup ======
-  const canvas = document.getElementById('gameCanvas');
-  const ctx = canvas.getContext('2d');
-  let DPR = window.devicePixelRatio || 1;
-  function fitCanvas(){
-    const scale = parseFloat(document.getElementById('resRange').value);
-    canvas.style.width = '100%';
-    canvas.style.height = (window.innerHeight - 40) + 'px';
-    const w = canvas.clientWidth * scale; const h = canvas.clientHeight * scale;
-    canvas.width = Math.floor(w * DPR); canvas.height = Math.floor(h * DPR);
-    ctx.setTransform(DPR,0,0,DPR,0,0);
+// Canvas
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let DPR = window.devicePixelRatio || 1;
+function fit(){
+  const scale = parseFloat(document.getElementById('resRange').value||1);
+  canvas.style.width = '100%';
+  canvas.style.height = (window.innerHeight - 80) + 'px';
+  const w = canvas.clientWidth * scale; const h = canvas.clientHeight * scale;
+  canvas.width = Math.floor(w * DPR); canvas.height = Math.floor(h * DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', fit); document.getElementById('resRange').addEventListener('input', fit); fit();
+
+// State
+let player, bots = [], bullets = [], particles = [], powerups = [];
+let running = false; let score = 0;
+
+// Controls
+let keys = {}; let mouse = {x:0,y:0,down:false};
+window.addEventListener('keydown', e=>{ keys[e.key.toLowerCase()] = true; if(e.code==='Space') dash(); });
+window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
+canvas.addEventListener('mousemove', e=>{ const r = canvas.getBoundingClientRect(); mouse.x = (e.clientX - r.left); mouse.y = (e.clientY - r.top); });
+canvas.addEventListener('mousedown', e=>{ mouse.down = true; });
+canvas.addEventListener('mouseup', e=>{ mouse.down = false; });
+
+// Mobile joystick
+const joy = document.getElementById('joy'); const fireBtn = document.getElementById('fire');
+let touchState = {dx:0,dy:0};
+let touching=false, origin=null;
+joy.addEventListener('touchstart', e=>{ e.preventDefault(); touching=true; const t=e.touches[0]; origin={x:t.clientX,y:t.clientY}; });
+joy.addEventListener('touchmove', e=>{ e.preventDefault(); if(!touching) return; const t=e.touches[0]; const dx = t.clientX - origin.x; const dy = t.clientY - origin.y; touchState.dx = Math.max(-1,Math.min(1,dx/60)); touchState.dy = Math.max(-1,Math.min(1,dy/60)); });
+joy.addEventListener('touchend', e=>{ touching=false; touchState.dx=0; touchState.dy=0; });
+fireBtn.addEventListener('touchstart', e=>{ e.preventDefault(); mouse.down=true; }); fireBtn.addEventListener('touchend', e=>{ e.preventDefault(); mouse.down=false; });
+
+// Utils
+function rand(a,b){return Math.random()*(b-a)+a}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function dist(a,b){const dx=a.x-b.x; const dy=a.y-b.y; return Math.hypot(dx,dy)}
+
+// Entities
+class Player{constructor(){this.x=0;this.y=0;this.r=16;this.angle=0;this.color='#6ee7b7';this.speed=2.6;this.reload=0;this.hp=100;this.maxHp=100;this.dashCooldown=0;this.shotCooldown=0;}
+  update(){
+    let mvx=0,mvy=0;
+    if(touching){ mvx = touchState.dx; mvy = touchState.dy; }
+    if(keys['w']||keys['arrowup']) mvy -= 1;
+    if(keys['s']||keys['arrowdown']) mvy += 1;
+    if(keys['a']||keys['arrowleft']) mvx -= 1;
+    if(keys['d']||keys['arrowright']) mvx += 1;
+    const len = Math.hypot(mvx,mvy) || 1;
+    this.x += (mvx/len)*this.speed;
+    this.y += (mvy/len)*this.speed;
+    // aim: use mouse center mapping
+    const cx = canvas.width/(2*DPR); const cy = canvas.height/(2*DPR);
+    this.angle = Math.atan2(mouse.y - cy, mouse.x - cx);
+    // shooting
+    if(mouse.down && this.shotCooldown<=0){ this.shoot(); this.shotCooldown = 10; }
+    this.shotCooldown = Math.max(0,this.shotCooldown-1);
+    this.dashCooldown = Math.max(0,this.dashCooldown-1);
+    // clamp to map
+    this.x = clamp(this.x, -MAP_SIZE, MAP_SIZE); this.y = clamp(this.y, -MAP_SIZE, MAP_SIZE);
   }
-  window.addEventListener('resize', fitCanvas); document.getElementById('resRange').addEventListener('input', fitCanvas); fitCanvas();
-
-  // ====== Networking ======
-  let ws = null; let clientId = null; let lobby = {players:[], bots:[]};
-  const connStatus = document.getElementById('connStatus');
-
-  function connect(){
-    if(ws) ws.close();
-    ws = new WebSocket(WS_SERVER);
-    ws.binaryType = 'arraybuffer';
-    ws.onopen = ()=>{connStatus.textContent = 'Conectado'; showMsg('Conectado ao servidor');}
-    ws.onclose = ()=>{connStatus.textContent = 'Desconectado'; showMsg('Desconectado');}
-    ws.onerror = (e)=>{console.error(e); connStatus.textContent='Erro';}
-    ws.onmessage = (ev)=>{ const data = JSON.parse(ev.data); handleServerMessage(data); }
+  shoot(){ const b = new Bullet(this.x+Math.cos(this.angle)*(this.r+6), this.y+Math.sin(this.angle)*(this.r+6), Math.cos(this.angle)*8, Math.sin(this.angle)*8, 'player'); bullets.push(b); spawnMuzzle(b.x,b.y,'#6ee7b7') }
+  draw(cam){ const s = worldToScreen(this.x,this.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.rotate(this.angle); // body
+    ctx.beginPath(); ctx.arc(0,0,this.r,0,Math.PI*2); ctx.fillStyle=this.color; ctx.fill(); // barrel
+    ctx.fillStyle='#082b2f'; ctx.fillRect(this.r-2,-6,16,12);
+    // health bar
+    ctx.restore();
   }
-
-  function sendInput(input){ if(ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'input', payload:input})) }
-
-  function handleServerMessage(msg){
-    if(msg.type==='welcome'){ clientId = msg.id; showMsg('Bem-vindo: '+clientId); }
-    else if(msg.type==='state'){ lobby = msg.state; updateLeaderboard(); }
-    else if(msg.type==='kicked'){ showMsg('Kicked: '+(msg.reason||'')); ws.close(); }
+}
+class Bot{constructor(id){this.id=id;this.x=rand(-MAP_SIZE,MAP_SIZE);this.y=rand(-MAP_SIZE,MAP_SIZE);this.r=14;this.color='#ffb86b';this.angle=0;this.speed=1.8;this.hp=60;this.state='wander';this.target=null;this.cool=rand(20,60);} update(){
+    // decide: if close to player -> attack; if low hp -> flee; else wander
+    const d = dist(this, player);
+    if(this.hp < 18){ this.state='flee'; }
+    else if(d < 220){ this.state='attack'; this.target = player; }
+    else { this.state='wander'; }
+    if(this.state==='attack' && this.target){ const ang = Math.atan2(this.target.y - this.y, this.target.x - this.x); this.x += Math.cos(ang)*this.speed; this.y += Math.sin(ang)*this.speed; this.angle = ang; if(this.cool<=0){ bullets.push(new Bullet(this.x+Math.cos(ang)*(this.r+6), this.y+Math.sin(ang)*(this.r+6), Math.cos(ang)*6, Math.sin(ang)*6, 'bot'+this.id)); this.cool = 80 } this.cool--; }
+    else if(this.state==='flee'){ // run away from player
+      const ang = Math.atan2(this.y - player.y, this.x - player.x); this.x += Math.cos(ang)*this.speed*1.2; this.y += Math.sin(ang)*this.speed*1.2; this.angle = ang; }
+    else { // wander
+      this.x += Math.cos(this.angle)*this.speed*0.5; this.y += Math.sin(this.angle)*this.speed*0.5; if(Math.random()<0.02) this.angle = Math.random()*Math.PI*2 }
+    // pick powerups
+    for(let i=powerups.length-1;i>=0;i--){ if(dist(this,powerups[i]) < this.r + powerups[i].r){ this.applyPower(powerups.splice(i,1)[0]); } }
+    // clamp
+    this.x = clamp(this.x, -MAP_SIZE, MAP_SIZE); this.y = clamp(this.y, -MAP_SIZE, MAP_SIZE);
   }
+  applyPower(pu){ if(pu.type==='hp'){ this.hp = Math.min(100, this.hp+30); } else if(pu.type==='speed'){ this.speed += 0.8; setTimeout(()=>{ this.speed -= 0.8 }, 9000); } }
+  draw(cam){ const s = worldToScreen(this.x,this.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.rotate(this.angle); ctx.beginPath(); ctx.arc(0,0,this.r,0,Math.PI*2); ctx.fillStyle=this.color; ctx.fill(); ctx.restore(); }
+}
+class Bullet{constructor(x,y,vx,vy,owner){this.x=x;this.y=y;this.vx=vx;this.vy=vy;this.life=90;this.r=4;this.owner=owner;} update(){ this.x+=this.vx; this.y+=this.vy; this.life--; } draw(cam){ const s = worldToScreen(this.x,this.y,cam); ctx.beginPath(); ctx.arc(s.x,s.y,this.r,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill(); } }
+class Particle{constructor(x,y,life,size,color){this.x=x;this.y=y;this.vx=rand(-1.5,1.5);this.vy=rand(-1.5,1.5);this.life=life;this.size=size;this.color=color;} update(){ this.x+=this.vx; this.y+=this.vy; this.life--; } draw(cam){ const s = worldToScreen(this.x,this.y,cam); ctx.globalAlpha = clamp(this.life/40,0,1); ctx.beginPath(); ctx.arc(s.x,s.y,this.size,0,Math.PI*2); ctx.fillStyle=this.color; ctx.fill(); ctx.globalAlpha=1; } }
+class Powerup{constructor(x,y,type){this.x=x;this.y=y;this.type=type;this.r=10;this.timer=900;} draw(cam){ const s = worldToScreen(this.x,this.y,cam); ctx.save(); ctx.translate(s.x,s.y); ctx.beginPath(); ctx.arc(0,0,this.r,0,Math.PI*2); if(this.type==='hp') ctx.fillStyle='#7effa1'; else if(this.type==='speed') ctx.fillStyle='#ffd166'; else ctx.fillStyle='#9ec5ff'; ctx.fill(); ctx.restore(); } }
 
-  // ====== Simple UI ======
-  document.getElementById('playBtn').addEventListener('click', ()=>{ if(!ws || ws.readyState!==WebSocket.OPEN) connect(); if(ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'join'})) });
-  document.getElementById('leaveBtn').addEventListener('click', ()=>{ if(ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'leave'})); });
+// World -> screen (camera centered on player)
+function worldToScreen(wx,wy,cam){ const sx = (wx - cam.x) + canvas.width/(2*DPR); const sy = (wy - cam.y) + canvas.height/(2*DPR); return {x:sx,y:sy}; }
 
-  function showMsg(t){ const el = document.getElementById('overlayMsg'); el.textContent = t; setTimeout(()=>{ if(el.textContent===t) el.textContent=''; }, 3000); }
+// Spawn helpers
+function spawnMuzzle(x,y,color){ for(let i=0;i<8;i++) particles.push(new Particle(x,y,rand(20,50),rand(1,3), color)); }
+function spawnExplosion(x,y){ for(let i=0;i<18;i++) particles.push(new Particle(x,y,rand(20,60),rand(2,4),'#ffb86b')); }
 
-  // ====== Input handling (touch + desktop) ======
-  let inputState = {mx:0,my:0,dx:0,dy:0,shoot:false};
-  // mouse aim
-  canvas.addEventListener('mousemove', e=>{ const r=canvas.getBoundingClientRect(); inputState.mx = e.clientX - r.left; inputState.my = e.clientY - r.top; });
-  canvas.addEventListener('mousedown', e=>{ inputState.shoot=true }); canvas.addEventListener('mouseup', e=>{ inputState.shoot=false });
-  // keyboard movement
-  const keys = {}; window.addEventListener('keydown', e=>{ keys[e.key.toLowerCase()]=true }); window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false });
+// Init
+function initGame(){ bullets=[];particles=[];powerups=[]; bots=[]; score=0; player = new Player(); // spawn bots according to slider
+  const wantedBots = parseInt(document.getElementById('botRange').value||15);
+  const nb = Math.min(wantedBots, MAX_TOTAL-1);
+  for(let i=0;i<nb;i++) bots.push(new Bot(i));
+  // spawn some powerups
+  for(let i=0;i<4;i++) powerups.push(new Powerup(rand(-MAP_SIZE,MAP_SIZE), rand(-MAP_SIZE,MAP_SIZE), ['hp','speed'][Math.floor(Math.random()*2)]));
+  updateLeaderboard();
+}
 
-  function getMoveVector(){ let vx=0,vy=0; if(keys['w']||keys['arrowup']) vy-=1; if(keys['s']||keys['arrowdown']) vy+=1; if(keys['a']||keys['arrowleft']) vx-=1; if(keys['d']||keys['arrowright']) vx+=1; return {vx,vy}; }
+// Leaderboard
+function updateLeaderboard(){ const ul = document.getElementById('leader'); ul.innerHTML=''; const list = [{name:'Você',score:score}]; bots.forEach((b,i)=>list.push({name:'Bot'+i, score: Math.max(0, Math.floor(b.hp))})); list.sort((a,b)=>b.score-a.score).slice(0,8).forEach(e=>{ const li = document.createElement('li'); li.textContent = `${e.name} — ${e.score}`; ul.appendChild(li); }); document.getElementById('scoreDisplay').textContent = score; }
 
-  // virtual joystick (very simple)
-  const joy = document.getElementById('joy'); const fireBtn = document.getElementById('fireBtn');
-  let touching = false; let touchOrigin = null;
-  function onTouchStart(e){ touching=true; const t = e.touches[0]; touchOrigin = {x:t.clientX, y:t.clientY}; }
-  function onTouchMove(e){ if(!touching) return; const t = e.touches[0]; const dx = t.clientX - touchOrigin.x; const dy = t.clientY - touchOrigin.y; inputState.dx = dx/60; inputState.dy = dy/60; }
-  function onTouchEnd(e){ touching=false; inputState.dx=0; inputState.dy=0 }
-  joy.addEventListener('touchstart', onTouchStart); joy.addEventListener('touchmove', onTouchMove); joy.addEventListener('touchend', onTouchEnd); fireBtn.addEventListener('touchstart', ()=>{ inputState.shoot=true }); fireBtn.addEventListener('touchend', ()=>{ inputState.shoot=false });
+// Game loop
+let lastTime = performance.now(); function loop(now){ const dt = now - lastTime; if(dt < 1000/120){ requestAnimationFrame(loop); return } lastTime = now; if(running){ step(); } render(); requestAnimationFrame(loop); }
+requestAnimationFrame(loop);
 
-  // show mobile controls if small screen
-  function adaptMobile(){ if(window.innerWidth<900){ document.getElementById('mobileControls').style.display='flex'; document.getElementById('mobileOverlay').style.display='block' } else { document.getElementById('mobileControls').style.display='none'; document.getElementById('mobileOverlay').style.display='none' } }
-  window.addEventListener('resize', adaptMobile); adaptMobile();
-
-  // ====== Rendering ======
-  function worldToScreen(wx,wy,cam){ const sx = (wx - cam.x) + canvas.width/(2*DPR); const sy = (wy - cam.y) + canvas.height/(2*DPR); return {x:sx,y:sy}; }
-
-  function draw(){ ctx.clearRect(0,0,canvas.width/DPR,canvas.height/DPR);
-    // camera centered at local player
-    const me = lobby.players.find(p=>p.id===clientId) || {x:0,y:0};
-    const cam = {x:me.x||0, y:me.y||0};
-    // grid
-    const grid = 80; ctx.save(); ctx.translate(canvas.width/(2*DPR) - cam.x % grid, canvas.height/(2*DPR) - cam.y % grid); ctx.globalAlpha=0.08; for(let x=-grid*10;x<canvas.width/DPR+grid*10;x+=grid){ for(let y=-grid*10;y<canvas.height/DPR+grid*10;y+=grid){ ctx.fillStyle='rgba(255,255,255,0.01)'; ctx.fillRect(x,y,grid-2,grid-2) } } ctx.restore();
-    // bots
-    lobby.bots.forEach(b=>{ const s=worldToScreen(b.x,b.y,cam); ctx.beginPath(); ctx.arc(s.x,s.y,14,0,Math.PI*2); ctx.fillStyle='#ffb86b'; ctx.fill(); });
-    // players
-    lobby.players.forEach(p=>{ const s=worldToScreen(p.x,p.y,cam); ctx.beginPath(); ctx.arc(s.x,s.y,16,0,Math.PI*2); ctx.fillStyle=(p.id===clientId)?'#6ee7b7':'#7cc3ff'; ctx.fill(); ctx.fillStyle='#000'; ctx.font='12px sans-serif'; ctx.fillText(p.name || p.id.slice(0,4), s.x-16, s.y-22); });
-    // bullets
-    (lobby.bullets||[]).forEach(b=>{ const s=worldToScreen(b.x,b.y,cam); ctx.beginPath(); ctx.arc(s.x,s.y,4,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill(); });
-    // HUD crosshair
-    ctx.beginPath(); ctx.arc(canvas.width/(2*DPR), canvas.height/(2*DPR), 6,0,Math.PI*2); ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.stroke();
-    requestAnimationFrame(draw);
+function step(){ // update player
+  player.update();
+  // bots
+  bots.forEach(b=>b.update());
+  // bullets
+  for(let i=bullets.length-1;i>=0;i--){ bullets[i].update(); if(bullets[i].life<=0) bullets.splice(i,1); }
+  // particles
+  for(let i=particles.length-1;i>=0;i--){ particles[i].update(); if(particles[i].life<=0) particles.splice(i,1); }
+  // powerups timer
+  for(let i=powerups.length-1;i>=0;i--){ powerups[i].timer--; if(powerups[i].timer<=0) powerups.splice(i,1); }
+  // collisions: bullets vs bots/player
+  for(let i=bullets.length-1;i>=0;i--){ const b = bullets[i]; if(b.owner==='player'){ // hit bots
+      for(let j=bots.length-1;j>=0;j--){ if(dist(b, bots[j]) < bots[j].r + b.r){ spawnExplosion(b.x,b.y); bots[j].hp -= 30; bullets.splice(i,1); if(bots[j].hp <= 0){ // remove bot
+              score += 10; bots.splice(j,1); // spawn replacement if under max
+              if(bots.length < parseInt(document.getElementById('botRange').value||15)) bots.push(new Bot(Math.floor(Math.random()*9999)));
+            }
+            break; }
+      }
+    } else { // bot bullet can hit player
+      if(dist(b, player) < player.r + b.r){ spawnExplosion(b.x,b.y); player.hp -= 18; bullets.splice(i,1); if(player.hp <= 0){ running=false; showMenu('Derrotado!'); } }
+    }
   }
-  draw();
+  // bots pick powerups
+  bots.forEach((bot,idx)=>{ powerups.forEach((pu,pi)=>{ if(dist(bot,pu) < bot.r + pu.r){ bot.applyPower(pu); powerups.splice(pi,1); } }); });
+  // player pick powerups
+  for(let i=powerups.length-1;i>=0;i--){ if(dist(player, powerups[i]) < player.r + powerups[i].r){ const pu = powerups.splice(i,1)[0]; if(pu.type==='hp'){ player.hp = Math.min(player.maxHp, player.hp + 40); } else if(pu.type==='speed'){ player.speed += 1.2; setTimeout(()=>{ player.speed -= 1.2 }, 9000); } } }
+  updateLeaderboard();
+}
 
-  // ====== Client -> Server tick ======
-  setInterval(()=>{
-    if(!ws || ws.readyState!==WebSocket.OPEN) return;
-    const mv = getMoveVector();
-    const input = {mv, touch:{dx:inputState.dx, dy:inputState.dy}, shoot: inputState.shoot};
-    sendInput(input);
-  }, 1000/TICK_RATE);
+// Render
+function render(){ // camera
+  const cam = {x: player.x, y: player.y};
+  // clear
+  ctx.clearRect(0,0,canvas.width/DPR,canvas.height/DPR);
+  // background grid
+  const grid = (document.getElementById('gfx').value==='low')?120:80; ctx.save(); ctx.translate(canvas.width/(2*DPR) - cam.x % grid, canvas.height/(2*DPR) - cam.y % grid); ctx.globalAlpha = 0.06; for(let x=-grid*10;x<canvas.width/DPR+grid*10;x+=grid){ for(let y=-grid*10;y<canvas.height/DPR+grid*10;y+=grid){ ctx.fillStyle = (((x+y)/grid)%2===0)?'rgba(255,255,255,0.01)':'rgba(255,255,255,0.005)'; ctx.fillRect(x,y,grid-2,grid-2); } } ctx.restore();
+  // powerups
+  powerups.forEach(p=>p.draw(cam));
+  // bots
+  bots.forEach(b=>b.draw(cam));
+  // bullets
+  bullets.forEach(b=>b.draw(cam));
+  // particles
+  particles.forEach(p=>p.draw(cam));
+  // player
+  player.draw(cam);
+  // HUD
+  // center crosshair
+  ctx.beginPath(); ctx.arc(canvas.width/(2*DPR), canvas.height/(2*DPR), 6,0,Math.PI*2); ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.stroke();
+  // HP bar
+  const hpW = 180; const hpX = 20; const hpY = 20; ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(hpX-6,hpY-6,hpW+12,26); ctx.fillStyle='#222'; ctx.fillRect(hpX,hpY,hpW,14); ctx.fillStyle='#ff6b6b'; ctx.fillRect(hpX,hpY, hpW*(player.hp/player.maxHp),14); ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.strokeRect(hpX,hpY,hpW,14);
+}
 
-  // ====== Leaderboard ======
-  function updateLeaderboard(){ const ul = document.getElementById('leader'); ul.innerHTML=''; const players = lobby.players || []; const bots = lobby.bots || []; const entries = players.concat(bots.map(b=>({id:'bot-'+b.id, name:b.name||'Bot', score:b.score||0}))); entries.sort((a,b)=> (b.score||0)-(a.score||0)).slice(0,8).forEach(e=>{ const li=document.createElement('li'); li.textContent = `${(e.name||e.id).slice(0,8)} — ${e.score||0}`; ul.appendChild(li); }); }
+// Dash
+function dash(){ if(player.dashCooldown>0) return; const dir = {x: Math.cos(player.angle), y: Math.sin(player.angle)}; player.x += dir.x*60; player.y += dir.y*60; player.dashCooldown = 180; }
 
-  // ====== Auto connect for demo ======
-  // connect(); // uncomment if you want to auto-connect when page loads
+// UI
+document.getElementById('playBtn').addEventListener('click', ()=>{ start(); });
+document.getElementById('menuPlay').addEventListener('click', ()=>{ start(); });
+document.getElementById('stopBtn').addEventListener('click', ()=>{ stop(); });
+function start(){ if(!player) initGame(); running = true; document.getElementById('menuOverlay').style.display='none'; }
+function stop(){ running=false; document.getElementById('menuOverlay').style.display='flex'; }
+function showMenu(msg){ const card = document.getElementById('menuCard'); card.querySelector('h2').textContent = msg || 'MHFP .io — Offline'; document.getElementById('menuOverlay').style.display='flex'; }
 
-  </script></body>
-</html><!-- ===================== server.js (Node.js WebSocket server) ===================== -->// Usage: npm install ws // Run: node server.js
+// menu options button
+document.getElementById('menuOptions').addEventListener('click', ()=>{ alert('Ajuste gráficos e bots no painel à esquerda.'); });
 
-const serverJs = ` const WebSocket = require('ws'); const wss = new WebSocket.Server({ port: 8080 }); console.log('WS server listening on ws://0.0.0.0:8080');
+// init default
+initGame();
 
-const TICK = 50; // ms => 20 Hz const MAP = 800; // same as client const MAX_TOTAL = 16; // players + bots let nextId = 1;
+// helper: spawn occasional powerups
+setInterval(()=>{ if(powerups.length < 4 && Math.random() < 0.6) powerups.push(new Powerup(rand(-MAP_SIZE,MAP_SIZE), rand(-MAP_SIZE,MAP_SIZE), ['hp','speed','shield'][Math.floor(Math.random()*3)]) ); }, 5000);
 
-const clients = new Map(); // ws -> {id, ws, name} let game = { players: [], bots: [], bullets: [] };
-
-function rand(min,max){return Math.random()*(max-min)+min}
-
-wss.on('connection', (ws)=>{ const id = 'p'+(nextId++); clients.set(ws, {id, ws}); ws.send(JSON.stringify({type:'welcome', id})); console.log('conn', id);
-
-ws.on('message', (raw)=>{ let msg = null; try{ msg = JSON.parse(raw); } catch(e){ return } const client = clients.get(ws); if(!client) return; if(msg.type==='join'){ // add player to game const p = {id: client.id, x: rand(-MAP, MAP), y: rand(-MAP, MAP), vx:0, vy:0, name:client.id, score:0}; game.players.push(p); rebalanceBots(); } else if(msg.type==='leave'){ game.players = game.players.filter(p=>p.id!==client.id); rebalanceBots(); } else if(msg.type==='input'){ // apply simple input (move vector and touch) const p = game.players.find(pp=>pp.id===client.id); if(p){ const mv = msg.payload.mv || {vx:0,vy:0}; // prefer touch joystick when non-zero if(msg.payload.touch && (Math.abs(msg.payload.touch.dx)>0.01 || Math.abs(msg.payload.touch.dy)>0.01)){ p.vx = msg.payload.touch.dx; p.vy = msg.payload.touch.dy; } else { p.vx = mv.vx; p.vy = mv.vy; } if(msg.payload.shoot){ // spawn bullet game.bullets.push({x:p.x+Math.random()*10, y:p.y+Math.random()*10, vx:Math.random()*6-3, vy:Math.random()*6-3, life:40, owner:p.id}); } } } });
-
-ws.on('close', ()=>{ const client = clients.get(ws); clients.delete(ws); if(client){ game.players = game.players.filter(p=>p.id!==client.id); rebalanceBots(); } }); });
-
-function rebalanceBots(){ const humanCount = game.players.length; const desiredBots = Math.max(0, MAX_TOTAL - humanCount); // remove or add bots to match desiredBots while(game.bots.length > desiredBots) game.bots.pop(); while(game.bots.length < desiredBots){ game.bots.push({id:'b'+Math.floor(Math.random()*9999), x: rand(-MAP,MAP), y: rand(-MAP,MAP), ang: Math.random()Math.PI2, score:0}); } }
-
-function tick(){ // update players game.players.forEach(p=>{ const speed = 3; const len = Math.hypot(p.vx||0,p.vy||0) || 1; p.x += (p.vx/len)*speed; p.y += (p.vy/len)*speed; p.x = Math.max(-MAP, Math.min(MAP, p.x)); p.y = Math.max(-MAP, Math.min(MAP, p.y)); }); // update bots (wander) game.bots.forEach(b=>{ b.x += Math.cos(b.ang)*1.2; b.y += Math.sin(b.ang)*1.2; if(Math.random()<0.03) b.ang = Math.random()Math.PI2; b.x = Math.max(-MAP, Math.min(MAP, b.x)); b.y = Math.max(-MAP, Math.min(MAP, b.y)); if(Math.random()<0.01){ // bots shoot sometimes game.bullets.push({x:b.x,y:b.y,vx:Math.random()*6-3,vy:Math.random()*6-3,life:40, owner:b.id}); } }); // update bullets game.bullets.forEach(b=>{ b.x += b.vx; b.y += b.vy; b.life--; }); game.bullets = game.bullets.filter(b=>b.life>0 && Math.abs(b.x)<=MAP && Math.abs(b.y)<=MAP);
-
-// very simple collision: bullets hitting players game.bullets.forEach((bul,bi)=>{ if(bul.owner && bul.owner.startsWith('b')){ // bot bullet can hit players game.players.forEach(pl=>{ if(Math.hypot(pl.x-bul.x, pl.y-bul.y) < 18){ pl.score = Math.max(0, pl.score-5); game.bullets[bi].life = 0; } }); } else { // player bullets hitting bots game.bots.forEach((bt,bi2)=>{ if(Math.hypot(bt.x-bul.x, bt.y-bul.y) < 16){ bt.score = (bt.score||0)+1; game.bullets[bi].life = 0; game.bots.splice(bi2,1); rebalanceBots(); } }); } });
-
-// broadcast state to all clients const state = { players: game.players.map(p=>({id:p.id,x:p.x,y:p.y,score:p.score,name:p.name})), bots: game.bots.map(b=>({id:b.id,x:b.x,y:b.y,score:b.score||0,name:'Bot'})), bullets: game.bullets.map(b=>({x:b.x,y:b.y})) }; const msg = JSON.stringify({type:'state', state}); wss.clients.forEach(ws=>{ if(ws.readyState===WebSocket.OPEN) ws.send(msg); }); }
-
-setInterval(tick, TICK);
-
-`;
-
-// For convenience, write server.js to disk if desired (uncomment below when running as standalone script that writes files) // const fs = require('fs'); fs.writeFileSync('server.js', serverJs);
-
-console.log('Server script ready. Save the server.js content shown in this file and run with Node.js.'); `;
-
-// Print friendly message to the HTML file consumer console.log('Copy the server.js block from this document to a file named server.js and run: npm install ws && node server.js');
-
-// End of file content
-
-`]}]}
-
+</script></body>
+</html>
