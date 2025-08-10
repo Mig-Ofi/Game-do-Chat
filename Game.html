@@ -1,0 +1,324 @@
+<!doctype html>
+
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MHFP .io - Demo</title>
+  <style>
+    :root{--bg:#0b1020;--panel:#0f1724;--accent:#6ee7b7;--muted:#9aa6bf}
+    *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,#071025 0%, #0b1020 60%);color:#e6eef8}
+    #ui{position:fixed;inset:16px;display:flex;gap:12px;align-items:flex-start}
+    .panel{background:rgba(255,255,255,0.03);backdrop-filter:blur(6px);padding:12px;border-radius:12px;box-shadow:0 6px 18px rgba(2,6,23,.6)}
+    .logo{font-weight:700;letter-spacing:1px;color:var(--accent)}
+    #left{width:320px}
+    #center{flex:1;display:flex;flex-direction:column;align-items:center}
+    #right{width:220px}
+    button{appearance:none;border:0;background:linear-gradient(90deg,#1f2937,#111827);color:#e6eef8;padding:8px 12px;border-radius:8px;cursor:pointer}
+    button.primary{background:linear-gradient(90deg,var(--accent),#3ddc97);color:#061018;font-weight:700}
+    #gameCanvas{width:100%;height:calc(100vh - 160px);background:transparent;border-radius:12px;box-shadow:0 12px 40px rgba(2,6,23,.7)}
+    .row{display:flex;gap:8px;align-items:center}
+    label{font-size:13px;color:var(--muted)}
+    select,input[type=range]{width:100%}
+    #overlayStart{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+    .startCard{pointer-events:auto;background:linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.02));padding:20px;border-radius:16px;text-align:center}
+    .small{font-size:13px;color:var(--muted)}
+    ul.leader{list-style:none;padding:0;margin:0}
+    ul.leader li{padding:6px 0;border-bottom:1px dashed rgba(255,255,255,0.03);font-size:14px}
+    .confRow{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    footer{position:fixed;left:0;right:0;bottom:8px;text-align:center;color:rgba(230,238,248,0.35);font-size:12px}
+    /* mobile tweak */
+    @media(max-width:900px){#ui{flex-direction:column;align-items:stretch}#left,#right{width:auto}}
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div id="left" class="panel">
+      <div class="logo">MHFP .io — Demo</div>
+      <p class="small">Jogo estilo <em>.io</em> — arena top-down. Single-player com bots para simular multiplayer. Você pode subir esse arquivo no GitHub Pages direto (coloque como index.html).</p>
+      <div style="margin-top:10px">
+        <div class="confRow"><label>Gráficos</label><select id="gfxSelect"><option value="high">Alto</option><option value="med">Médio</option><option value="low">Baixo</option></select></div>
+        <div class="confRow"><label>Som</label><button id="muteBtn">Ligado</button></div>
+        <div class="confRow"><label>Partículas</label><input type="checkbox" id="particles" checked/></div>
+        <div style="margin-top:8px" class="row">
+          <button id="playBtn" class="primary">▶ Play</button>
+          <button id="resetBtn">Reset</button>
+        </div>
+      </div>
+      <hr style="border:none;border-top:1px solid rgba(255,255,255,0.03);margin:12px 0">
+      <div>
+        <div class="small">Controles:</div>
+        <ul style="margin:8px 0;padding-left:18px;color:var(--muted)">
+          <li>W A S D ou setas — mover</li>
+          <li>Mouse — mirar</li>
+          <li>Click esquerdo — tiro</li>
+          <li>Esc — pausar</li>
+        </ul>
+      </div>
+    </div><div id="center">
+  <canvas id="gameCanvas" width="1280" height="720"></canvas>
+  <div id="overlayStart"><div class="startCard panel"><h2>MHFP .io — Demo</h2><p class="small">Arena local com bots — pronto para testar no GitHub Pages.</p><div style="margin-top:12px"><button id="overlayPlay" class="primary">Iniciar Jogo</button></div></div></div>
+</div>
+
+<div id="right" class="panel">
+  <div style="display:flex;justify-content:space-between;align-items:center"><strong>Leaderboard</strong><span id="scoreDisplay" class="small">0</span></div>
+  <ul id="leaderList" class="leader"></ul>
+  <hr style="border:none;border-top:1px solid rgba(255,255,255,0.03);margin:12px 0">
+  <div><strong>Configuração</strong>
+    <div style="margin-top:8px;color:var(--muted)">
+      <div class="small">Resolução interna (canvas): <input id="resRange" type="range" min="0.5" max="1" step="0.1" value="1"/></div>
+      <div style="margin-top:8px" class="small">Velocidade dos bots: <input id="aiRange" type="range" min="0.4" max="1.6" step="0.1" value="1"/></div>
+    </div>
+  </div>
+</div>
+
+  </div>  <footer>Exportável para GitHub Pages — basta colocar este arquivo como <code>index.html</code> no repositório.</footer>  <script>
+  // --- Configs ---
+  const CFG = {
+    maxBots: 8,
+    playerRadius: 16,
+    botRadius: 14,
+    bulletSpeed: 7,
+    bulletLife: 120,
+    worldSize: 3000
+  }
+
+  // --- Canvas setup ---
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  let DPR = window.devicePixelRatio || 1;
+
+  function fitCanvas(){
+    const scale = parseFloat(document.getElementById('resRange').value);
+    canvas.style.width = '100%';
+    canvas.style.height = (window.innerHeight - 160) + 'px';
+    const w = canvas.clientWidth * scale;
+    const h = canvas.clientHeight * scale;
+    canvas.width = Math.floor(w * DPR);
+    canvas.height = Math.floor(h * DPR);
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', fitCanvas);
+  document.getElementById('resRange').addEventListener('input', fitCanvas);
+  fitCanvas();
+
+  // --- Simple asset placeholders (SVG drawn) ---
+  // The game uses drawn circles for characters so you don't need external images.
+
+  // --- Game state ---
+  let player, bullets = [], bots = [], pickups = [], particles = [];
+  let keys = {}, mouse = {x:0,y:0,down:false};
+  let running = false;
+  let score = 0;
+  let gfxSetting = 'high';
+  let soundOn = true;
+
+  // --- Utilities ---
+  function rand(min,max){return Math.random()*(max-min)+min}
+  function dist(a,b){const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy)}
+  function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+
+  // --- Entities ---
+  class Entity{constructor(x,y){this.x=x;this.y=y;}}
+  class Player extends Entity{
+    constructor(x,y){super(x,y);this.angle=0;this.speed=2.6;this.radius=CFG.playerRadius;this.color='#6ee7b7';this.reload=0;this.alive=true}
+    update(){
+      if(!this.alive) return;
+      let vx=0,vy=0;
+      if(keys['w']||keys['ArrowUp']) vy-=1;
+      if(keys['s']||keys['ArrowDown']) vy+=1;
+      if(keys['a']||keys['ArrowLeft']) vx-=1;
+      if(keys['d']||keys['ArrowRight']) vx+=1;
+      const len = Math.hypot(vx,vy)||1;
+      this.x += (vx/len)*this.speed;
+      this.y += (vy/len)*this.speed;
+      // clamp to world
+      this.x = clamp(this.x, -CFG.worldSize, CFG.worldSize);
+      this.y = clamp(this.y, -CFG.worldSize, CFG.worldSize);
+      // angle to mouse
+      const rect = canvas.getBoundingClientRect();
+      const cx = rect.left + rect.width/2;
+      const cy = rect.top + rect.height/2;
+      // Let's assume camera center follows player so mouse coords map to world relative
+      const mx = mouse.x; const my = mouse.y;
+      this.angle = Math.atan2(my - canvas.height/2, mx - canvas.width/2);
+      if(mouse.down && this.reload<=0){ this.shoot(); this.reload=12 }
+      this.reload = Math.max(0, this.reload-1);
+    }
+    shoot(){
+      const b = new Bullet(this.x + Math.cos(this.angle)*(this.radius+6), this.y + Math.sin(this.angle)*(this.radius+6), this.angle, 'player');
+      bullets.push(b);
+      if(soundOn){ /* placeholder for sound */ }
+      // muzzle particle
+      for(let i=0;i<6;i++) particles.push(new Particle(b.x, b.y, Math.random()*2+0.5, this.color, rand(10,20)));
+    }
+    draw(cam){
+      const screen = worldToScreen(this.x,this.y,cam);
+      ctx.save();
+      ctx.translate(screen.x,screen.y);
+      ctx.rotate(this.angle);
+      // body
+      ctx.beginPath(); ctx.arc(0,0,this.radius,0,Math.PI*2); ctx.fillStyle=this.color; ctx.fill();
+      // cannon
+      ctx.fillStyle='#08323a'; ctx.fillRect(this.radius-2,-6,14,12);
+      // subtle shadow
+      if(gfxSetting!=='low'){
+        ctx.globalAlpha=0.12; ctx.beginPath(); ctx.ellipse(0,this.radius+6,this.radius*1.1,6,0,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill(); ctx.globalAlpha=1;
+      }
+      ctx.restore();
+    }
+  }
+  class Bot extends Entity{
+    constructor(x,y,name){super(x,y);this.name=name||('Bot'+Math.floor(Math.random()*99));this.angle=0;this.speed=1.8;this.radius=CFG.botRadius;this.cool=0}
+    update(){
+      // simple AI: wander, chase player if close
+      const d = dist(this, player);
+      if(d < 300){ // chase
+        const ang = Math.atan2(player.y - this.y, player.x - this.x);
+        this.x += Math.cos(ang)*this.speed*parseFloat(document.getElementById('aiRange').value);
+        this.y += Math.sin(ang)*this.speed*parseFloat(document.getElementById('aiRange').value);
+        this.angle = ang;
+        if(this.cool<=0){ bullets.push(new Bullet(this.x + Math.cos(this.angle)*(this.radius+6), this.y + Math.sin(this.angle)*(this.radius+6), this.angle, 'bot')); this.cool=40 }
+        this.cool--;
+      } else {
+        // wander
+        this.x += Math.cos(this.angle)*this.speed*0.6;
+        this.y += Math.sin(this.angle)*this.speed*0.6;
+        if(Math.random()<0.02) this.angle = Math.random()*Math.PI*2
+      }
+      // clamp
+      this.x = clamp(this.x, -CFG.worldSize, CFG.worldSize);
+      this.y = clamp(this.y, -CFG.worldSize, CFG.worldSize);
+    }
+    draw(cam){
+      const screen = worldToScreen(this.x,this.y,cam);
+      ctx.save(); ctx.translate(screen.x,screen.y); ctx.rotate(this.angle);
+      ctx.beginPath(); ctx.arc(0,0,this.radius,0,Math.PI*2); ctx.fillStyle='#ffb86b'; ctx.fill();
+      // eye
+      ctx.beginPath(); ctx.arc(this.radius/2, -4, 4,0,Math.PI*2); ctx.fillStyle='#111'; ctx.fill();
+      ctx.restore();
+    }
+  }
+  class Bullet extends Entity{
+    constructor(x,y,angle,owner){super(x,y);this.vx=Math.cos(angle)*CFG.bulletSpeed;this.vy=Math.sin(angle)*CFG.bulletSpeed;this.life=CFG.bulletLife;this.r=4;this.owner=owner}
+    update(){this.x+=this.vx;this.y+=this.vy;this.life--}
+    draw(cam){const s=worldToScreen(this.x,this.y,cam);ctx.beginPath();ctx.arc(s.x,s.y,this.r,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill()}
+  }
+  class Particle extends Entity{constructor(x,y,size,color,life){super(x,y);this.vx=rand(-1,1);this.vy=rand(-1,1);this.size=size;this.color=color;this.life=life}update(){this.x+=this.vx;this.y+=this.vy;this.life--}draw(cam){const s=worldToScreen(this.x,this.y,cam);ctx.globalAlpha=clamp(this.life/40,0,1);ctx.beginPath();ctx.arc(s.x,s.y,this.size,0,Math.PI*2);ctx.fillStyle=this.color;ctx.fill();ctx.globalAlpha=1}}
+
+  // --- Camera utilities ---
+  function worldToScreen(wx,wy,cam){
+    const cx = cam.x; const cy = cam.y;
+    const screenX = (wx - cx) + canvas.width/(2*DPR);
+    const screenY = (wy - cy) + canvas.height/(2*DPR);
+    return {x:screenX,y:screenY}
+  }
+
+  // --- Init game ---
+  function initGame(){
+    bullets=[];bots=[];particles=[];pickups=[];score=0;
+    player = new Player(0,0);
+    // spawn bots
+    for(let i=0;i<CFG.maxBots;i++){bots.push(new Bot(rand(-CFG.worldSize,CFG.worldSize), rand(-CFG.worldSize,CFG.worldSize))) }
+    updateLeaderboard();
+  }
+
+  // --- Leaderboard ---
+  function updateLeaderboard(){
+    const list = document.getElementById('leaderList'); list.innerHTML='';
+    const entries=[{name:'Você',score:score}];
+    bots.forEach(b=>entries.push({name:b.name,score:Math.floor(Math.random()*60)}));
+    entries.sort((a,b)=>b.score-a.score).slice(0,8).forEach(e=>{const li=document.createElement('li');li.textContent=`${e.name} — ${e.score}`;list.appendChild(li)});
+    document.getElementById('scoreDisplay').textContent = score;
+  }
+
+  // --- Main loop ---
+  let last=0;
+  function loop(ts){
+    const dt = Math.min(50, ts-last); last=ts;
+    if(running){
+      // update
+      player.update();
+      bots.forEach(b=>b.update());
+      bullets.forEach(b=>b.update()); bullets = bullets.filter(b=>b.life>0);
+      particles.forEach(p=>p.update()); particles = particles.filter(p=>p.life>0);
+      // collisions
+      bullets.forEach((b, i)=>{
+        if(b.owner==='player'){
+          bots.forEach((bot,bi)=>{ if(dist(b,bot) < bot.radius+6){ bots.splice(bi,1); bullets.splice(i,1); score+=10; for(let k=0;k<10;k++) particles.push(new Particle(bot.x,bot.y,rand(2,6),'#ffb86b',rand(20,50))); } });
+        } else if(b.owner==='bot'){
+          if(dist(b,player) < player.radius+6){ player.alive=false; running=false; }
+        }
+      });
+
+      // spawn new bots occasionally
+      if(bots.length < CFG.maxBots && Math.random()<0.01) bots.push(new Bot(rand(-CFG.worldSize,CFG.worldSize), rand(-CFG.worldSize,CFG.worldSize)));
+
+      updateLeaderboard();
+    }
+    // draw
+    drawScene();
+    requestAnimationFrame(loop);
+  }
+
+  function drawScene(){
+    // camera follows player
+    const cam = {x:player?player.x:0, y:player?player.y:0}
+    // background grid
+    ctx.clearRect(0,0,canvas.width/DPR,canvas.height/DPR);
+    const screenCenterX = canvas.width/(2*DPR);
+    const screenCenterY = canvas.height/(2*DPR);
+    // draw a tiled background
+    const gridSize = (gfxSetting==='low')?120:80;
+    ctx.save();
+    ctx.translate(screenCenterX - cam.x % gridSize, screenCenterY - cam.y % gridSize);
+    ctx.globalAlpha = (gfxSetting==='low')?0.06:0.12;
+    for(let x=-gridSize*10;x<canvas.width/DPR+gridSize*10;x+=gridSize){
+      for(let y=-gridSize*10;y<canvas.height/DPR+gridSize*10;y+=gridSize){
+        ctx.fillStyle = ( ((x+y)/gridSize)%2 ===0) ? 'rgba(120,140,160,0.02)' : 'rgba(120,140,160,0.01)';
+        ctx.fillRect(x,y,gridSize-1,gridSize-1);
+      }
+    }
+    ctx.restore();
+
+    // draw pickups (none for now)
+    // entities
+    bots.forEach(b=>b.draw(cam));
+    bullets.forEach(b=>b.draw(cam));
+    particles.forEach(p=>p.draw(cam));
+    if(player) player.draw(cam);
+
+    // HUD crosshair
+    ctx.save(); ctx.beginPath(); ctx.arc(canvas.width/(2*DPR), canvas.height/(2*DPR), 6, 0, Math.PI*2); ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.stroke(); ctx.restore();
+
+    // if not running show overlay
+    const overlay = document.getElementById('overlayStart'); overlay.style.display = running ? 'none' : 'flex';
+  }
+
+  // --- Input ---
+  window.addEventListener('keydown', e=>{ if(e.key==='Escape'){ running=false } keys[e.key.toLowerCase()]=true });
+  window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false });
+  canvas.addEventListener('mousemove', e=>{ const rect=canvas.getBoundingClientRect(); mouse.x=e.clientX-rect.left; mouse.y=e.clientY-rect.top });
+  canvas.addEventListener('mousedown', e=>{ mouse.down=true });
+  canvas.addEventListener('mouseup', e=>{ mouse.down=false });
+
+  // UI handlers
+  document.getElementById('playBtn').addEventListener('click', ()=>{ startGame() });
+  document.getElementById('overlayPlay').addEventListener('click', ()=>{ startGame() });
+  document.getElementById('resetBtn').addEventListener('click', ()=>{ initGame(); running=false});
+  document.getElementById('gfxSelect').addEventListener('change',(e)=>{ gfxSetting=e.target.value });
+  document.getElementById('muteBtn').addEventListener('click',()=>{ soundOn=!soundOn; document.getElementById('muteBtn').textContent = soundOn? 'Ligado':'Mudo' });
+
+  function startGame(){ if(!player) initGame(); running=true; player.alive=true; }
+
+  // --- Start ---
+  initGame(); requestAnimationFrame(loop);
+
+  // --- Helpful notes for GitHub Pages ---
+  // 1) Salve este arquivo como index.html no root do repo.
+  // 2) Faça commit e ative GitHub Pages em Settings -> Pages -> branch main (ou gh-pages).
+  // 3) Se quiser sprites/sons, crie pasta /assets e atualize paths no código (há pontos no cabeçalho para adicionar).
+
+  </script></body>
+</html>
