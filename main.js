@@ -1,4 +1,4 @@
-// FPS 3D com bots que atiram - usando Three.js
+// main.js - FPS 3D com bots que atiram - controle corrigido no botão iniciar
 
 let scene, camera, renderer, controls;
 let objects = [];
@@ -74,16 +74,30 @@ function init() {
   const startBtn = document.getElementById('startBtn');
   const instructions = document.getElementById('instructions');
 
+  // Botão escurece ao clicar
+  startBtn.addEventListener('mousedown', () => {
+    startBtn.style.filter = 'brightness(0.6)';
+  });
+  startBtn.addEventListener('mouseup', () => {
+    startBtn.style.filter = 'brightness(1)';
+  });
+  startBtn.addEventListener('mouseout', () => {
+    startBtn.style.filter = 'brightness(1)';
+  });
+
   startBtn.addEventListener('click', () => {
+    console.log('Botão Começar clicado, tentando ativar pointer lock...');
     controls.lock();
   });
 
   controls.addEventListener('lock', () => {
+    console.log('Pointer lock ativado!');
     instructions.style.display = 'none';
     addCrosshair();
     addHUD();
   });
   controls.addEventListener('unlock', () => {
+    console.log('Pointer lock liberado!');
     instructions.style.display = 'flex';
     removeCrosshair();
     removeHUD();
@@ -273,7 +287,6 @@ function animate(){
     } else {
       // Colisão com jogador
       if(b.position.distanceTo(camera.position) < 0.5){
-        // Aqui só exibimos texto, poderia reduzir vida etc.
         statusEl.textContent = 'Você foi atingido!';
         scene.remove(b);
         botBullets.splice(i,1);
