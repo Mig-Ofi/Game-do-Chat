@@ -1,17 +1,26 @@
-// main.js - FPS 3D básico com Three.js
+// FPS 3D com bots que atiram - usando Three.js
 
 let scene, camera, renderer, controls;
 let objects = [];
 let bullets = [];
 let bots = [];
+let botBullets = [];
+
 let move = {forward:false, backward:false, left:false, right:false};
 let velocity = new THREE.Vector3();
 let direction = new THREE.Vector3();
+
 let clock = new THREE.Clock();
+
 let canShoot = true;
 const shootCooldown = 0.3;
 const bulletSpeed = 60;
 const bulletLife = 2;
+const botShootCooldown = 1.5;
+
+let kills = 0;
+
+const statusEl = document.getElementById('status');
 
 init();
 animate();
@@ -33,36 +42,51 @@ function init() {
   directionalLight.position.set(1, 10, 6);
   scene.add(directionalLight);
 
-  // Piso
+  // Piso com textura
+  const textureLoader = new THREE.TextureLoader();
+  const floorTexture = textureLoader.load('https://threejs.org/examples/textures/checker.png');
+  floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
+  floorTexture.repeat.set(10,10);
+  floorTexture.anisotropy = 16;
+
   const floorGeometry = new THREE.PlaneGeometry(50, 50);
-  const floorMaterial = new THREE.MeshStandardMaterial({color: 0x444444});
+  const floorMaterial = new THREE.MeshStandardMaterial({map: floorTexture});
   const floor = new THREE.Mesh(floorGeometry, floorMaterial);
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
   objects.push(floor);
 
-  // Obstáculos
-  addObstacle(5, 1, -5);
-  addObstacle(-5, 1, -5);
-  addObstacle(0, 1, 5);
-  addObstacle(-3, 1, 3);
+  // Obstáculos com textura
+  const boxTexture = textureLoader.load('https://threejs.org/examples/textures/brick_diffuse.jpg');
 
-  // Bots
-  for(let i=0; i<5; i++) spawnBot();
+  addObstacle(5,1,-5, boxTexture);
+  addObstacle(-5,1,-5, boxTexture);
+  addObstacle(0,1,5, boxTexture);
+  addObstacle(-3,1,3, boxTexture);
+
+  // Bots com textura vermelha
+  for(let i=0; i<5; i++) spawnBot(boxTexture);
 
   // Controls
   controls = new THREE.PointerLockControls(camera, renderer.domElement);
 
-  document.getElementById('startBtn').addEventListener('click', () => {
+  const startBtn = document.getElementById('startBtn');
+  const instructions = document.getElementById('instructions');
+
+  startBtn.addEventListener('click', () => {
     controls.lock();
   });
 
   controls.addEventListener('lock', () => {
-    document.getElementById('instructions').style.display = 'none';
+    instructions.style.display = 'none';
+    addCrosshair();
+    addHUD();
   });
   controls.addEventListener('unlock', () => {
-    document.getElementById('instructions').style.display = 'flex';
+    instructions.style.display = 'flex';
+    removeCrosshair();
+    removeHUD();
   });
 
   window.addEventListener('resize', onWindowResize);
@@ -71,62 +95,89 @@ function init() {
   document.addEventListener('click', onMouseClick);
 }
 
-function addObstacle(x,y,z) {
+function addCrosshair(){
+  if(document.getElementById('crosshair')) return;
+  const crosshair = document.createElement('div');
+  crosshair.id = 'crosshair';
+  document.body.appendChild(crosshair);
+}
+function removeCrosshair(){
+  const crosshair = document.getElementById('crosshair');
+  if(crosshair) crosshair.remove();
+}
+
+function addHUD(){
+  if(document.getElementById('hud')) return;
+  const hud = document.createElement('div');
+  hud.id = 'hud';
+  hud.textContent = `Kills: ${kills}`;
+  document.body.appendChild(hud);
+}
+function updateHUD(){
+  const hud = document.getElementById('hud');
+  if(hud) hud.textContent = `Kills: ${kills}`;
+}
+function removeHUD(){
+  const hud = document.getElementById('hud');
+  if(hud) hud.remove();
+}
+
+function addObstacle(x,y,z, texture){
   const geometry = new THREE.BoxGeometry(2,2,2);
-  const material = new THREE.MeshStandardMaterial({color:0x888888});
+  const material = new THREE.MeshStandardMaterial({map: texture});
   const box = new THREE.Mesh(geometry, material);
   box.position.set(x,y,z);
   scene.add(box);
   objects.push(box);
 }
 
-function spawnBot() {
+function spawnBot(texture){
   const geometry = new THREE.CapsuleGeometry(0.3, 1.0, 4, 8);
-  const material = new THREE.MeshStandardMaterial({color: 0xff4444});
+  const material = new THREE.MeshStandardMaterial({color: 0xff4444, map: texture});
   const bot = new THREE.Mesh(geometry, material);
   bot.position.set(
     (Math.random() - 0.5) * 40,
     1,
     (Math.random() - 0.5) * 40
   );
-  bot.userData = { velocity: new THREE.Vector3() };
+  bot.userData = {
+    velocity: new THREE.Vector3(),
+    shootTimer: 0
+  };
   scene.add(bot);
   bots.push(bot);
 }
 
-function onWindowResize() {
+function onWindowResize(){
   camera.aspect = window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-function onKeyDown(e) {
-  switch(e.code) {
+function onKeyDown(e){
+  switch(e.code){
     case 'KeyW': move.forward = true; break;
     case 'KeyS': move.backward = true; break;
     case 'KeyA': move.left = true; break;
     case 'KeyD': move.right = true; break;
   }
 }
-
-function onKeyUp(e) {
-  switch(e.code) {
+function onKeyUp(e){
+  switch(e.code){
     case 'KeyW': move.forward = false; break;
     case 'KeyS': move.backward = false; break;
     case 'KeyA': move.left = false; break;
     case 'KeyD': move.right = false; break;
   }
 }
-
-function onMouseClick() {
+function onMouseClick(){
   if(!controls.isLocked) return;
   if(!canShoot) return;
   canShoot = false;
   shoot();
   setTimeout(() => { canShoot = true; }, shootCooldown * 1000);
 }
-
-function shoot() {
+function shoot(){
   const bulletGeometry = new THREE.SphereGeometry(0.1,8,8);
   const bulletMaterial = new THREE.MeshBasicMaterial({color: 0xffff00});
   const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
@@ -135,12 +186,12 @@ function shoot() {
   camera.getWorldDirection(shootDirection);
 
   bullet.position.copy(camera.position);
-  bullet.userData = { velocity: shootDirection.multiplyScalar(bulletSpeed), life: bulletLife };
+  bullet.userData = { velocity: shootDirection.multiplyScalar(bulletSpeed), life: bulletLife, fromBot:false };
   scene.add(bullet);
   bullets.push(bullet);
 }
 
-function animate() {
+function animate(){
   requestAnimationFrame(animate);
 
   const delta = clock.getDelta();
@@ -157,7 +208,7 @@ function animate() {
   controls.moveRight(-velocity.x * delta);
   controls.moveForward(-velocity.z * delta);
 
-  // Atualiza projéteis
+  // Atualiza projéteis do jogador
   for(let i = bullets.length - 1; i >= 0; i--) {
     let b = bullets[i];
     b.position.addScaledVector(b.userData.velocity, delta);
@@ -166,22 +217,27 @@ function animate() {
       scene.remove(b);
       bullets.splice(i, 1);
     } else {
-      // Colisão simples com bots
-      for(let j = bots.length -1; j>=0; j--) {
-        const bot = bots[j];
-        if(bot.position.distanceTo(b.position) < 0.5) {
-          scene.remove(bot);
-          bots.splice(j,1);
-          scene.remove(b);
-          bullets.splice(i,1);
-          break;
+      // Colisão com bots
+      if(!b.userData.fromBot){
+        for(let j = bots.length -1; j >= 0; j--) {
+          const bot = bots[j];
+          if(bot.position.distanceTo(b.position) < 0.5) {
+            scene.remove(bot);
+            bots.splice(j,1);
+            scene.remove(b);
+            bullets.splice(i,1);
+            kills++;
+            updateHUD();
+            break;
+          }
         }
       }
     }
   }
 
-  // Atualiza bots (andando aleatório simples)
+  // Atualiza bots e projéteis dos bots
   bots.forEach(bot => {
+    // Bot patrulha aleatoriamente
     if(!bot.userData.direction || Math.random() < 0.02) {
       bot.userData.direction = new THREE.Vector3(
         (Math.random() - 0.5) * 2,
@@ -191,10 +247,53 @@ function animate() {
     }
     bot.position.addScaledVector(bot.userData.direction, delta * 1.5);
 
-    // Mantém dentro do mapa
+    // Mantém bots no mapa
     bot.position.x = Math.min(24, Math.max(-24, bot.position.x));
     bot.position.z = Math.min(24, Math.max(-24, bot.position.z));
+
+    // Bot atira no jogador se perto e cooldown zerado
+    bot.userData.shootTimer -= delta;
+    if(bot.userData.shootTimer <= 0){
+      const dist = bot.position.distanceTo(camera.position);
+      if(dist < 20){
+        bot.userData.shootTimer = botShootCooldown;
+        botShoot(bot);
+      }
+    }
   });
 
+  // Atualiza projéteis dos bots
+  for(let i = botBullets.length - 1; i >= 0; i--) {
+    let b = botBullets[i];
+    b.position.addScaledVector(b.userData.velocity, delta);
+    b.userData.life -= delta;
+    if(b.userData.life <= 0) {
+      scene.remove(b);
+      botBullets.splice(i, 1);
+    } else {
+      // Colisão com jogador
+      if(b.position.distanceTo(camera.position) < 0.5){
+        // Aqui só exibimos texto, poderia reduzir vida etc.
+        statusEl.textContent = 'Você foi atingido!';
+        scene.remove(b);
+        botBullets.splice(i,1);
+      }
+    }
+  }
+
   renderer.render(scene, camera);
-                          }
+}
+
+function botShoot(bot){
+  const bulletGeometry = new THREE.SphereGeometry(0.1,8,8);
+  const bulletMaterial = new THREE.MeshBasicMaterial({color: 0xff0000});
+  const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+
+  const dir = new THREE.Vector3();
+  dir.subVectors(camera.position, bot.position).normalize();
+
+  bullet.position.copy(bot.position);
+  bullet.userData = { velocity: dir.multiplyScalar(bulletSpeed*0.8), life: bulletLife, fromBot:true };
+  scene.add(bullet);
+  botBullets.push(bullet);
+}
